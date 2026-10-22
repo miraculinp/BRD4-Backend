@@ -99,7 +99,7 @@ def _standardize_mol(mol: Chem.Mol, config: dict):
         if bool(config.get("remove_salts", True)):
             mol = rdMolStandardize.LargestFragmentChooser().choose(mol)
         mol = rdMolStandardize.Cleanup(mol)
-        mol = rdMolStandardize.Uncharge(mol)
+        mol = rdMolStandardize.Uncharger().uncharge(mol)
         if mol is None or mol.GetNumAtoms() == 0:
             return None, None
         smiles = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=True)
