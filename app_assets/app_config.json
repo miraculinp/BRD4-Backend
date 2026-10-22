@@ -1,0 +1,19 @@
+{
+  "fingerprint_radius": 2,
+  "fingerprint_bits": 2048,
+  "use_chirality": true,
+  "remove_salts": true,
+  "feature_counts": {
+    "Morgan": 103,
+    "Mordred 2D": 146,
+    "Physicochemical": 1,
+    "Mordred 3D": 0
+  },
+  "n_training_reference_rows": 5134,
+  "n_features": 250,
+  "ad_methods": [
+    "standardized_5nn",
+    "training_bounding_box",
+    "leverage"
+  ]
+}
