@@ -3,15 +3,13 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from contextlib import asynccontextmanager
-from typing import Literal
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .inference import AssetError, FeatureError, explain_smiles, load_assets, parse_mol2, parse_sdf, parse_smiles_text, predict_records
+from .inference import AssetError, FeatureError, load_assets, parse_mol2, parse_sdf, parse_smiles_text, predict_records
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 LOGGER = logging.getLogger("brd4.api")
@@ -41,11 +39,6 @@ class SmilesRequest(BaseModel):
     smiles_text: str = Field(min_length=1, max_length=2_000_000)
 
 
-class ExplainRequest(BaseModel):
-    smiles: str = Field(min_length=1, max_length=20_000)
-    model: Literal["ExtraTreesRegressor", "CatBoostRegressor"] = "ExtraTreesRegressor"
-
-
 def _check_limit(records, failures):
     if len(records) > MAX_MOLECULES:
         raise HTTPException(
@@ -72,7 +65,6 @@ def health():
         "n_features": len(assets["selected"]),
         "n_training_reference": assets["n_training"],
         "applicability_methods": ["standardized_5nn", "training_bounding_box", "leverage"],
-        "shap_models": ["ExtraTreesRegressor", "CatBoostRegressor"],
     }
 
 
@@ -117,24 +109,3 @@ async def predict_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Prediction failed ({type(exc).__name__}). Check backend logs for details.") from exc
     finally:
         await file.close()
-
-
-@app.post("/api/explain/smiles")
-def explain_one(payload: ExplainRequest):
-    """Compute local SHAP only on user request; SVR has no SHAP endpoint."""
-    try:
-        assets = load_assets()
-        started = time.perf_counter()
-        LOGGER.info("Local SHAP requested for %s", payload.model)
-        # TreeSHAP can use substantial transient memory. Serialize explanation
-        # requests so simultaneous users do not multiply that peak on a small instance.
-        with assets["explainer_lock"]:
-            result = explain_smiles(payload.smiles, assets, model_name=payload.model)
-        LOGGER.info("Local SHAP completed for %s in %.1f s", payload.model, time.perf_counter() - started)
-        return result
-    except (AssetError, FeatureError, ValueError, ImportError) as exc:
-        LOGGER.exception("Local explanation request failed")
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        LOGGER.exception("Unexpected local explanation failure")
-        raise HTTPException(status_code=500, detail=f"Explanation failed ({type(exc).__name__}). Check backend logs for details.") from exc

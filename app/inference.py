@@ -1,4 +1,4 @@
-"""Cached BRD4 inference, applicability domain and on-demand tree SHAP."""
+"""Cached BRD4 inference and applicability-domain calculations."""
 from __future__ import annotations
 
 import io
@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 from rdkit import Chem, DataStructs
 from rdkit.Chem import Descriptors, rdFingerprintGenerator
-from rdkit.Chem.Draw import rdMolDraw2D
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 from threadpoolctl import threadpool_limits
@@ -147,8 +146,6 @@ def load_assets() -> dict:
         "mordred_names": {str(d): f"mordred2d_{d}" for d in descriptor_objects},
         "feature_cache": OrderedDict(),
         "cache_lock": threading.Lock(),
-        "explainers": {},
-        "explainer_lock": threading.Lock(),
         "n_training": len(train_array),
     }
     # Fail at startup if saved estimators cannot accept the declared fixed 250 inputs.
@@ -359,100 +356,3 @@ def predict_records(records: list[dict], failures: list[dict], assets: dict) -> 
             }
             results.append(row)
     return {"results": results, "failures": failures, "n_parsed": len(records), "n_scored": len(results)}
-
-
-@lru_cache(maxsize=1)
-def _load_explainer(model_name: str):
-    import shap
-    model = load_assets()["models"][model_name]
-    return shap.TreeExplainer(model)
-
-
-def _feature_rows(mol: Chem.Mol, names: list[str], values: np.ndarray, contributions: np.ndarray):
-    out = []
-    for name, value, shap_value in zip(names, values, contributions):
-        out.append({"feature": str(name), "value": float(value), "shap_value": float(shap_value),
-                    "direction": "increases" if shap_value > 0 else "decreases" if shap_value < 0 else "neutral"})
-    return out
-
-
-def _morgan_environments(mol: Chem.Mol, feature_rows: list[dict], assets: dict):
-    ao = rdFingerprintGenerator.AdditionalOutput()
-    ao.AllocateBitInfoMap()
-    assets["morgan_generator"].GetFingerprint(mol, additionalOutput=ao)
-    info = ao.GetBitInfoMap()
-    by_bit = {}
-    for row in feature_rows:
-        if not row["feature"].startswith("ecfp4_"):
-            continue
-        by_bit[int(row["feature"].rsplit("_", 1)[1])] = row
-    ranked = sorted((by_bit[b] for b in info if b in by_bit), key=lambda r: abs(r["shap_value"]), reverse=True)[:12]
-    palette = ["#276FBF", "#F28E2B", "#2A9D8F", "#D1495B", "#7B2CBF", "#E9C46A",
-               "#00A6A6", "#BC6C25", "#5B8E7D", "#C44536", "#6C63FF", "#8A817C"]
-    atom_colors, bond_colors, legends = {}, {}, []
-    for idx, row in enumerate(ranked):
-        bit = int(row["feature"].rsplit("_", 1)[1])
-        color = palette[idx % len(palette)]
-        environments = info.get(bit, ())
-        atoms, bonds = set(), set()
-        for center, radius in environments:
-            atoms.add(int(center))
-            bonds.update(Chem.FindAtomEnvironmentOfRadiusN(mol, int(radius), int(center)))
-        for bond_idx in bonds:
-            bond = mol.GetBondWithIdx(int(bond_idx))
-            atoms.add(bond.GetBeginAtomIdx()); atoms.add(bond.GetEndAtomIdx())
-        for atom_idx in atoms:
-            atom_colors[atom_idx] = tuple(int(color[j:j+2], 16)/255 for j in (1,3,5))
-        for bond_idx in bonds:
-            bond_colors[int(bond_idx)] = tuple(int(color[j:j+2], 16)/255 for j in (1,3,5))
-        legends.append({"feature": row["feature"], "shap_value": row["shap_value"],
-                        "direction": row["direction"], "color": color,
-                        "atom_indices": sorted(atoms), "bond_indices": sorted(map(int, bonds))})
-    svg = None
-    if atom_colors:
-        drawer = rdMolDraw2D.MolDraw2DSVG(620, 380)
-        options = drawer.drawOptions()
-        options.addAtomIndices = False
-        drawer.DrawMolecule(mol, highlightAtoms=sorted(atom_colors), highlightBonds=sorted(bond_colors),
-                            highlightAtomColors=atom_colors, highlightBondColors=bond_colors)
-        drawer.FinishDrawing()
-        svg = drawer.GetDrawingText()
-    return svg, legends
-
-
-def explain_smiles(smiles: str, assets: dict, model_name: str = "ExtraTreesRegressor") -> dict:
-    if model_name not in ("ExtraTreesRegressor", "CatBoostRegressor"):
-        raise ValueError("Local SHAP is available for ExtraTreesRegressor and CatBoostRegressor only.")
-    mol, canonical = standardize_smiles(smiles, remove_salts=bool(assets["config"].get("remove_salts", True)))
-    record = {"input_name": "Molecule", "input_format": "SMILES", "canonical_smiles": canonical, "mol": mol}
-    X = calculate_fixed_features([record], assets)
-    values = X.to_numpy(dtype=float)[0]
-    if not np.isfinite(values).all():
-        missing = X.columns[~np.isfinite(values)].tolist()
-        raise FeatureError("Selected feature(s) are missing/nonfinite; no imputation is used: " + ", ".join(missing[:20]))
-    explanations = {}
-    with threadpool_limits(limits=1):
-        model = assets["models"][model_name]
-        explainer = _load_explainer(model_name)
-        # Ask TreeSHAP for only the attribution array; avoid retaining a full
-        # Explanation object and its auxiliary arrays on memory-limited hosts.
-        contributions = np.asarray(explainer.shap_values(X, check_additivity=False), dtype=float)
-        if contributions.ndim == 3:
-            contributions = contributions[0, :, 0]
-        elif contributions.ndim == 2:
-            contributions = contributions[0]
-        base = np.asarray(explainer.expected_value, dtype=float).reshape(-1)[0]
-        prediction = float(np.asarray(model.predict(X), dtype=float).reshape(-1)[0])
-        feature_rows = _feature_rows(mol, assets["selected"], values, contributions)
-        feature_rows.sort(key=lambda r: abs(r["shap_value"]), reverse=True)
-        svg, legends = _morgan_environments(mol, feature_rows, assets)
-        explanations[model_name] = {
-            "base_value": float(base), "prediction": prediction,
-            "shap_sum": float(np.sum(contributions)),
-            "additivity_error": float(base + np.sum(contributions) - prediction),
-            "features": feature_rows,
-            "top_features": feature_rows[:20],
-            "morgan_svg": svg,
-            "morgan_legend": legends,
-        }
-    return {"canonical_smiles": canonical, "models": explanations}

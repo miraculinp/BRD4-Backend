@@ -1,6 +1,6 @@
 # BRD4 Predictor API (Python 3.10)
 
-FastAPI backend for the fixed Stage 05 250-feature BRD4 model. It predicts with ExtraTrees, CatBoost, and SVR; reports standardized 5-NN, training bounding-box, and leverage applicability-domain checks; and computes local TreeSHAP for ExtraTrees/CatBoost only when requested.
+FastAPI backend for the fixed Stage 05 250-feature BRD4 model. It predicts with ExtraTrees, CatBoost, and SVR and reports standardized 5-NN, training bounding-box, and leverage applicability-domain checks.
 
 ## Assets required
 
@@ -26,6 +26,5 @@ Create a new Render Web Service from this folder/repository using the included `
 - `GET /api/health`
 - `POST /api/predict/smiles` — JSON `{ "smiles_text": "CCO ethanol" }`, one SMILES per line.
 - `POST /api/predict/file` — multipart file `.sdf` or `.mol2`.
-- `POST /api/explain/smiles` — JSON `{ "smiles": "...", "model": "ExtraTreesRegressor" }`; local SHAP for one selected tree model per request. Use `CatBoostRegressor` to request the other model. If `model` is omitted, ExtraTrees is used.
 
 Maximum request: 250 parsed molecules, 20 MB per structure file. Prediction results include all three model predictions, per-method AD values and an `inside_all_three` flag. CSV export is handled in the frontend.
