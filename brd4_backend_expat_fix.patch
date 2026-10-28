@@ -1,0 +1,25 @@
+From 992543151c9ac33f0d686b547278f4845a76d7b6 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Wed, 28 Oct 2026 18:01:03 +0100
+Subject: [PATCH] Install expat runtime library for RDKit
+
+---
+ Dockerfile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Dockerfile b/Dockerfile
+index e28193b..f6c549b 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
+     PIP_NO_CACHE_DIR=1
+ 
+ RUN apt-get update && apt-get install -y --no-install-recommends \
+-    libglib2.0-0 libx11-6 libxext6 libxrender1 libsm6 \
++    libexpat1 libglib2.0-0 libx11-6 libxext6 libxrender1 libsm6 \
+     && rm -rf /var/lib/apt/lists/*
+ 
+ WORKDIR /app
+-- 
+2.51.1
+
