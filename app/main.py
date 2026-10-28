@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +43,7 @@ class SmilesRequest(BaseModel):
 
 class ExplainRequest(BaseModel):
     smiles: str = Field(min_length=1, max_length=20_000)
+    model: Literal["ExtraTreesRegressor", "CatBoostRegressor"] = "ExtraTreesRegressor"
 
 
 def _check_limit(records, failures):
@@ -121,7 +124,14 @@ def explain_one(payload: ExplainRequest):
     """Compute local SHAP only on user request; SVR has no SHAP endpoint."""
     try:
         assets = load_assets()
-        return explain_smiles(payload.smiles, assets)
+        started = time.perf_counter()
+        LOGGER.info("Local SHAP requested for %s", payload.model)
+        # TreeSHAP can use substantial transient memory. Serialize explanation
+        # requests so simultaneous users do not multiply that peak on a small instance.
+        with assets["explainer_lock"]:
+            result = explain_smiles(payload.smiles, assets, model_name=payload.model)
+        LOGGER.info("Local SHAP completed for %s in %.1f s", payload.model, time.perf_counter() - started)
+        return result
     except (AssetError, FeatureError, ValueError, ImportError) as exc:
         LOGGER.exception("Local explanation request failed")
         raise HTTPException(status_code=422, detail=str(exc)) from exc

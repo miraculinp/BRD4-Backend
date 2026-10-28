@@ -361,7 +361,7 @@ def predict_records(records: list[dict], failures: list[dict], assets: dict) -> 
     return {"results": results, "failures": failures, "n_parsed": len(records), "n_scored": len(results)}
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=1)
 def _load_explainer(model_name: str):
     import shap
     model = load_assets()["models"][model_name]
@@ -420,7 +420,9 @@ def _morgan_environments(mol: Chem.Mol, feature_rows: list[dict], assets: dict):
     return svg, legends
 
 
-def explain_smiles(smiles: str, assets: dict) -> dict:
+def explain_smiles(smiles: str, assets: dict, model_name: str = "ExtraTreesRegressor") -> dict:
+    if model_name not in ("ExtraTreesRegressor", "CatBoostRegressor"):
+        raise ValueError("Local SHAP is available for ExtraTreesRegressor and CatBoostRegressor only.")
     mol, canonical = standardize_smiles(smiles, remove_salts=bool(assets["config"].get("remove_salts", True)))
     record = {"input_name": "Molecule", "input_format": "SMILES", "canonical_smiles": canonical, "mol": mol}
     X = calculate_fixed_features([record], assets)
@@ -429,26 +431,28 @@ def explain_smiles(smiles: str, assets: dict) -> dict:
         missing = X.columns[~np.isfinite(values)].tolist()
         raise FeatureError("Selected feature(s) are missing/nonfinite; no imputation is used: " + ", ".join(missing[:20]))
     explanations = {}
-    with threadpool_limits(limits=2):
-        for model_name in ("ExtraTreesRegressor", "CatBoostRegressor"):
-            model = assets["models"][model_name]
-            explainer = _load_explainer(model_name)
-            explanation = explainer(X)
-            contributions = np.asarray(explanation.values, dtype=float)
-            if contributions.ndim == 2:
-                contributions = contributions[0]
-            base = np.asarray(explanation.base_values, dtype=float).reshape(-1)[0]
-            prediction = float(np.asarray(model.predict(X), dtype=float).reshape(-1)[0])
-            feature_rows = _feature_rows(mol, assets["selected"], values, contributions)
-            feature_rows.sort(key=lambda r: abs(r["shap_value"]), reverse=True)
-            svg, legends = _morgan_environments(mol, feature_rows, assets)
-            explanations[model_name] = {
-                "base_value": float(base), "prediction": prediction,
-                "shap_sum": float(np.sum(contributions)),
-                "additivity_error": float(base + np.sum(contributions) - prediction),
-                "features": feature_rows,
-                "top_features": feature_rows[:20],
-                "morgan_svg": svg,
-                "morgan_legend": legends,
-            }
+    with threadpool_limits(limits=1):
+        model = assets["models"][model_name]
+        explainer = _load_explainer(model_name)
+        # Ask TreeSHAP for only the attribution array; avoid retaining a full
+        # Explanation object and its auxiliary arrays on memory-limited hosts.
+        contributions = np.asarray(explainer.shap_values(X, check_additivity=False), dtype=float)
+        if contributions.ndim == 3:
+            contributions = contributions[0, :, 0]
+        elif contributions.ndim == 2:
+            contributions = contributions[0]
+        base = np.asarray(explainer.expected_value, dtype=float).reshape(-1)[0]
+        prediction = float(np.asarray(model.predict(X), dtype=float).reshape(-1)[0])
+        feature_rows = _feature_rows(mol, assets["selected"], values, contributions)
+        feature_rows.sort(key=lambda r: abs(r["shap_value"]), reverse=True)
+        svg, legends = _morgan_environments(mol, feature_rows, assets)
+        explanations[model_name] = {
+            "base_value": float(base), "prediction": prediction,
+            "shap_sum": float(np.sum(contributions)),
+            "additivity_error": float(base + np.sum(contributions) - prediction),
+            "features": feature_rows,
+            "top_features": feature_rows[:20],
+            "morgan_svg": svg,
+            "morgan_legend": legends,
+        }
     return {"canonical_smiles": canonical, "models": explanations}

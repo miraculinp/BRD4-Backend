@@ -26,6 +26,6 @@ Create a new Render Web Service from this folder/repository using the included `
 - `GET /api/health`
 - `POST /api/predict/smiles` — JSON `{ "smiles_text": "CCO ethanol" }`, one SMILES per line.
 - `POST /api/predict/file` — multipart file `.sdf` or `.mol2`.
-- `POST /api/explain/smiles` — JSON `{ "smiles": "CCO" }`; local SHAP for both tree models.
+- `POST /api/explain/smiles` — JSON `{ "smiles": "...", "model": "ExtraTreesRegressor" }`; local SHAP for one selected tree model per request. Use `CatBoostRegressor` to request the other model. If `model` is omitted, ExtraTrees is used.
 
 Maximum request: 250 parsed molecules, 20 MB per structure file. Prediction results include all three model predictions, per-method AD values and an `inside_all_three` flag. CSV export is handled in the frontend.
