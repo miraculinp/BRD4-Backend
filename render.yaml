@@ -6,5 +6,9 @@ services:
     dockerContext: .
     healthCheckPath: /api/health
     envVars:
-      - key: CORS_ORIGINS
-        sync: false
+      - key: MAX_MOLECULES
+        value: "250"
+      - key: MAX_UPLOAD_BYTES
+        value: "20971520"
+      - key: LOG_LEVEL
+        value: INFO

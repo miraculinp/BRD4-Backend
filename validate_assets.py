@@ -1,23 +1,16 @@
-"""Preflight saved assets under the Vercel Python runtime before deployment."""
+"""Run the same saved-asset and model compatibility checks used by the API startup."""
 from __future__ import annotations
 
-import joblib
-import numpy as np
-
-from app.inference import ASSET_DIR, MODELS, load_assets
+from app.inference import load_assets
 
 
 def main() -> None:
     assets = load_assets()
-    reference = joblib.load(ASSET_DIR / "training_reference.joblib")
-    row = reference["X_train"].loc[:, assets["selected"]].iloc[[0]]
-    print(f"Loaded {len(assets['selected'])} selected features and {len(reference['X_train']):,} training reference rows.")
-    for name in MODELS:
-        prediction = np.asarray(assets["models"][name].predict(row), dtype=float)
-        if prediction.shape != (1,) or not np.isfinite(prediction).all():
-            raise RuntimeError(f"{name} returned an invalid prediction: {prediction!r}")
-        print(f"{name}: compatible; sample pIC50 prediction={prediction[0]:.4f}")
-    print("Asset preflight passed.")
+    print(f"PASS: {len(assets['selected'])} fixed features")
+    print(f"PASS: {assets['n_training']:,} training reference molecules")
+    print("PASS: " + ", ".join(assets["models"].keys()))
+    print(f"PASS: 5-NN threshold = {assets['knn_threshold']:.6f}")
+    print(f"PASS: leverage threshold = {assets['leverage_threshold']:.6f}")
 
 
 if __name__ == "__main__":
